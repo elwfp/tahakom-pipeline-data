@@ -1,0 +1,2153 @@
+<div class="stat-card" onclick="showDetailModal('clients', 'Unique Clients')" style="cursor: pointer;">
+                    <div class="stat-number" id="uniqueClients">0</div>
+                    <div class="stat-label">Unique Clients</div>
+                </div>
+            </div>
+
+            <div class="charts-section">
+                <div class="chart-container">
+                    <div class="chart-title">📊 Status Distribution</div>
+                    <canvas id="statusChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">🎯 Category Breakdown</div>
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+
+            <div class="data-table">
+                <div class="table-header">
+                    <h3>📋 Pipeline Data</h3>
+                    <div class="table-controls">
+                        <span id="recordCount">0 records</span>
+                        <button class="settings-btn" onclick="openTableSettings()">⚙️ Settings</button>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table id="pipelineTable">
+                        <thead>
+                            <tr id="tableHeaders"></tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <h3>📁 No Data Available</h3>
+            <p>Please wait while we load data from GitHub.</p>
+        </div>
+
+        <!-- Modal for detailed views -->
+        <div id="detailModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalTitle"></h3>
+                    <span class="close" onclick="closeModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div id="modalContent"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="settings-overlay" id="settingsOverlay" onclick="closeTableSettings()"></div>
+        <div class="settings-panel" id="settingsPanel">
+            <div class="settings-header">
+                <h3>⚙️ Table Settings</h3>
+                <span class="close" onclick="closeTableSettings()">&times;</span>
+            </div>
+            <div class="settings-body">
+                <div class="setting-group">
+                    <h4>📋 Show/Hide Columns</h4>
+                    <div id="columnVisibilityControls">
+                        <!-- Column controls will be populated here -->
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <h4>📏 Column Widths</h4>
+                    <div id="columnWidthControls">
+                        <!-- Width controls will be populated here -->
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <h4>🔄 Reset Options</h4>
+                    <button class="btn btn-secondary" onclick="resetTableSettings()" style="width: 100%;">Reset All Settings</button>
+                </div>
+            </div>
+        </div>
+        <!-- Row Detail Modal -->
+        <div id="rowDetailModal" class="modal row-detail-modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="rowDetailTitle">📋 Opportunity Details</h3>
+                    <span class="close" onclick="closeRowDetailModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div id="rowDetailContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const EXCEL_URL = "https://github.com/elwfp/tahakom-pipeline-data/raw/main/data.xlsx";
+        
+        let pipelineData = [];
+        let filteredData = [];
+        let statusChart, categoryChart;
+
+        // Multi-select filter states
+        let selectedFilters = {
+            client: [],
+            status: [],
+            category: [],
+            spoc: [],
+            rfp: []
+        };
+
+        // Table settings with performance optimizations
+        let tableSettings = {
+            columnVisibility: {},
+            columnWidths: {},
+            isResizing: false,
+            currentColumn: null,
+            virtualScrolling: {
+                enabled: true,
+                rowHeight: 40,
+                visibleRows: 50,
+                startIndex: 0,
+                endIndex: 50
+            }
+        };
+
+        // Detail modal settings
+        let detailModalSettings = {
+            showAdditionalFields: false
+        };
+
+        const tahakomColors = {
+            purple: ['#4a1850', '#8e4a97', '#c8a2c8', '#e6d6e6'],
+            teal: ['#20b2aa', '#48d1cc', '#7fefea'],
+            gray: ['#6b6b6b', '#9e9e9e', '#d3d3d3']
+        };
+
+        // Auto-load from GitHub instead of file input
+        async function loadGitHubData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('loading').innerHTML = '<h3>🔄 Loading data from GitHub...</h3>';
+                document.getElementById('emptyState').style.display = 'none';
+                document.getElementById('dashboardContent').style.display = 'none';
+
+                console.log('Fetching from:', EXCEL_URL);
+                const response = await fetch(EXCEL_URL);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                console.log('File loaded, size:', arrayBuffer.byteLength);
+                
+                const workbook = XLSX.read(arrayBuffer, {type: 'array'});
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                
+                pipelineData = XLSX.utils.sheet_to_json(worksheet);
+                console.log('Data parsed:', pipelineData.length, 'rows');
+                
+                if (pipelineData.length === 0) {
+                    throw new Error('No data found in Excel file');
+                }
+                
+                document.getElementById('loading').innerHTML = '<h3>🔄 Processing data...</h3>';
+                
+                // Convert Excel date numbers to readable dates
+                pipelineData.forEach(row => {
+                    if (row.Received && typeof row.Received === 'number') {
+                        const date = new Date((row.Received - 25569) * 86400 * 1000);
+                        row.Received = date.toLocaleDateString();
+                    }
+                });
+
+                filteredData = [...pipelineData];
+                
+                document.getElementById('loading').innerHTML = '<h3>🔄 Building dashboard...</h3>';
+                
+                setTimeout(() => {
+                    initializeDashboard();
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('dashboardContent').style.display = 'block';
+                    document.getElementById('emptyState').style.display = 'none';
+                }, 100);
+
+            } catch (error) {
+                console.error('Error loading file:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboardContent').style.display = 'none';
+                document.getElementById('emptyState').style.display = 'block';
+                document.getElementById('emptyState').innerHTML = `
+                    <h3>❌ Failed to load data</h3>
+                    <p>Error: ${error.message}</p>
+                    <p>Please check the GitHub repository or try refreshing.</p>
+                    <button class="btn" onclick="loadGitHubData()" style="margin-top: 15px;">🔄 Try Again</button>
+                `;
+            }
+        }
+
+        function initializeDashboard() {
+            // Initialize in stages to prevent blocking
+            setTimeout(() => {
+                populateMultiSelectFilters();
+                setTimeout(() => {
+                    initializeTableSettings();
+                    setTimeout(() => {
+                        updateStats();
+                        setTimeout(() => {
+                            createCharts();
+                            setTimeout(() => {
+                                renderTable();
+                            }, 50);
+                        }, 50);
+                    }, 50);
+                }, 50);
+            }, 50);
+        }
+
+        // Default columns to show (in order) - based on your exact Excel headers
+        const defaultColumns = [
+            '#', 'Client', 'Lead Topic', 'BD SPOC', 'Received', 'RFP', 'Category', 'Status', 'QAF', 'Actions done', 'Next Step'
+        ];
+
+        function initializeTableSettings() {
+            if (pipelineData.length === 0) return;
+            
+            const allHeaders = Object.keys(pipelineData[0]);
+            // Only use default columns that exist in the data for initial visibility
+            const availableDefaultHeaders = defaultColumns.filter(header => 
+                allHeaders.includes(header)
+            );
+            
+            // Initialize column visibility - ALL columns get initialized, but only defaults are visible
+            allHeaders.forEach(header => {
+                if (!(header in tableSettings.columnVisibility)) {
+                    // Show only default columns by default, hide ALL others (including Actions done, Comments, etc.)
+                    tableSettings.columnVisibility[header] = availableDefaultHeaders.includes(header);
+                }
+            });
+            
+            // Initialize column widths for ALL columns (so they have widths when enabled)
+            allHeaders.forEach(header => {
+                if (!(header in tableSettings.columnWidths)) {
+                    tableSettings.columnWidths[header] = getDefaultColumnWidth(header);
+                }
+            });
+            
+            populateTableSettings();
+        }
+
+        function getDefaultColumnWidth(header) {
+            // Set different default widths based on column content
+            const widthMap = {
+                '#': 60,
+                'Client': 180,
+                'Lead Topic': 300,
+                'BD SPOC': 120,
+                'Received': 100,
+                'RFP': 80,
+                'Category': 120,
+                'Status': 120,
+                'QAF': 80,
+                'Next Step': 200,
+                'Actions done': 250, // Now a default column
+                // Additional column defaults
+                'Comments': 200,
+                'Comments 3': 200,
+                'FP LEAD': 100,
+                'DEADLINE FOR NEXT STEP': 150,
+                'BD FOLLOW UP': 120
+            };
+            
+            // Smart width detection based on column name patterns
+            if (widthMap[header]) {
+                return widthMap[header];
+            } else if (header.toLowerCase().includes('comment')) {
+                return 200;
+            } else if (header.toLowerCase().includes('deadline') || header.toLowerCase().includes('date')) {
+                return 130;
+            } else if (header.toLowerCase().includes('follow') || header.toLowerCase().includes('lead')) {
+                return 120;
+            } else {
+                return 150; // Default for unknown columns
+            }
+        }
+
+        function populateTableSettings() {
+            const allHeaders = Object.keys(pipelineData[0] || {});
+            
+            console.log('All Excel columns found:', allHeaders); // Debug: see what columns we're getting
+            
+            // Default columns that exist in the data
+            const defaultHeaders = defaultColumns.filter(header => allHeaders.includes(header));
+            
+            // ALL other columns from Excel (everything not in default list)
+            const otherHeaders = allHeaders.filter(header => 
+                !defaultColumns.includes(header)
+            );
+            
+            console.log('Default headers:', defaultHeaders); // Debug
+            console.log('Additional headers:', otherHeaders); // Debug
+            
+            // Populate column visibility controls
+            const visibilityContainer = document.getElementById('columnVisibilityControls');
+            visibilityContainer.innerHTML = '';
+            
+            // Add default columns section
+            if (defaultHeaders.length > 0) {
+                const defaultSection = document.createElement('div');
+                defaultSection.innerHTML = '<h5 style="color: var(--tahakom-teal-dark); margin: 10px 0 5px 0; font-size: 0.9rem;">📋 Default Columns</h5>';
+                visibilityContainer.appendChild(defaultSection);
+                
+                defaultHeaders.forEach(header => {
+                    const isVisible = tableSettings.columnVisibility[header] !== false;
+                    const columnItem = document.createElement('div');
+                    columnItem.className = 'column-item';
+                    columnItem.innerHTML = `
+                        <div class="column-checkbox">
+                            <input type="checkbox" id="vis_${header}" ${isVisible ? 'checked' : ''} 
+                                   onchange="toggleColumnVisibility('${header}', this.checked)">
+                            <label for="vis_${header}">${header}</label>
+                        </div>
+                    `;
+                    visibilityContainer.appendChild(columnItem);
+                });
+            }
+            
+            // Add ALL other columns section
+            if (otherHeaders.length > 0) {
+                const otherSection = document.createElement('div');
+                otherSection.innerHTML = `<h5 style="color: var(--tahakom-gray-dark); margin: 15px 0 5px 0; font-size: 0.9rem;">📄 Additional Columns (${otherHeaders.length} available)</h5>`;
+                visibilityContainer.appendChild(otherSection);
+                
+                // Sort additional headers alphabetically for easier browsing
+                const sortedOtherHeaders = otherHeaders.sort();
+                
+                sortedOtherHeaders.forEach(header => {
+                    const isVisible = tableSettings.columnVisibility[header] === true; // Default hidden for additional columns
+                    const columnItem = document.createElement('div');
+                    columnItem.className = 'column-item';
+                    
+                    // Add special styling for certain columns
+                    let labelStyle = '';
+                    let labelNote = '(optional)';
+                    
+                    if (header.toLowerCase().includes('comment')) {
+                        labelNote = '(notes)';
+                        labelStyle = 'color: var(--tahakom-teal-dark);';
+                    } else if (header.toLowerCase().includes('deadline') || header.toLowerCase().includes('date')) {
+                        labelNote = '(timeline)';
+                        labelStyle = 'color: var(--tahakom-purple-dark);';
+                    } else if (header.toLowerCase().includes('follow')) {
+                        labelNote = '(follow-up)';
+                        labelStyle = 'color: var(--tahakom-purple-medium);';
+                    } else if (header.toLowerCase().includes('lead') || header.toLowerCase().includes('fp')) {
+                        labelNote = '(lead info)';
+                        labelStyle = 'color: var(--tahakom-teal-medium);';
+                    }
+                    
+                    columnItem.innerHTML = `
+                        <div class="column-checkbox">
+                            <input type="checkbox" id="vis_${header}" ${isVisible ? 'checked' : ''} 
+                                   onchange="toggleColumnVisibility('${header}', this.checked)">
+                            <label for="vis_${header}" style="${labelStyle}">${header} <span style="font-size: 0.8rem; color: var(--tahakom-gray-medium); font-weight: normal;">${labelNote}</span></label>
+                        </div>
+                    `;
+                    visibilityContainer.appendChild(columnItem);
+                });
+            } else {
+                // Show message if no additional columns found
+                const noAdditionalSection = document.createElement('div');
+                noAdditionalSection.innerHTML = `<p style="color: var(--tahakom-gray-medium); font-style: italic; margin: 15px 0;">No additional columns found in Excel file.</p>`;
+                visibilityContainer.appendChild(noAdditionalSection);
+            }
+            
+            // Populate column width controls
+            const widthContainer = document.getElementById('columnWidthControls');
+            widthContainer.innerHTML = '';
+            
+            // Only show width controls for visible columns
+            const visibleHeaders = allHeaders.filter(header => 
+                tableSettings.columnVisibility[header] === true
+            );
+            
+            visibleHeaders.forEach(header => {
+                const width = tableSettings.columnWidths[header] || getDefaultColumnWidth(header);
+                const columnItem = document.createElement('div');
+                columnItem.className = 'column-item';
+                columnItem.innerHTML = `
+                    <div class="column-checkbox">
+                        <label>${header}</label>
+                    </div>
+                    <div class="width-control">
+                        <input type="range" class="width-slider" min="80" max="400" value="${width}"
+                               onchange="updateColumnWidth('${header}', this.value)">
+                        <span class="width-value">${width}px</span>
+                    </div>
+                `;
+                widthContainer.appendChild(columnItem);
+            });
+        }
+
+        function openTableSettings() {
+            document.getElementById('settingsPanel').classList.add('open');
+            document.getElementById('settingsOverlay').classList.add('show');
+            populateTableSettings(); // Refresh the settings
+        }
+
+        function closeTableSettings() {
+            document.getElementById('settingsPanel').classList.remove('open');
+            document.getElementById('settingsOverlay').classList.remove('show');
+        }
+
+        function toggleColumnVisibility(columnName, isVisible) {
+            tableSettings.columnVisibility[columnName] = isVisible;
+            renderTable();
+            populateTableSettings(); // Refresh width controls
+        }
+
+        function updateColumnWidth(columnName, width) {
+            tableSettings.columnWidths[columnName] = parseInt(width);
+            renderTable();
+            
+            // Update the width display
+            const widthDisplay = document.querySelector(`input[onchange*="${columnName}"]`).parentNode.querySelector('.width-value');
+            if (widthDisplay) {
+                widthDisplay.textContent = width + 'px';
+            }
+        }
+
+        function resetTableSettings() {
+            const allHeaders = Object.keys(pipelineData[0] || {});
+            
+            // Reset visibility (only default columns visible)
+            allHeaders.forEach(header => {
+                tableSettings.columnVisibility[header] = defaultColumns.includes(header);
+            });
+            
+            // Reset widths to defaults
+            allHeaders.forEach(header => {
+                tableSettings.columnWidths[header] = getDefaultColumnWidth(header);
+            });
+            
+            renderTable();
+            populateTableSettings();
+        }
+
+        function populateMultiSelectFilters() {
+            const clients = [...new Set(pipelineData.map(row => row.Client).filter(Boolean))].sort();
+            const statuses = [...new Set(pipelineData.map(row => row.Status).filter(Boolean))].sort();
+            const categories = [...new Set(pipelineData.map(row => row.Category).filter(Boolean))].sort();
+            const spocs = [...new Set(pipelineData.map(row => row['BD SPOC']).filter(Boolean))].sort();
+            const rfps = [...new Set(pipelineData.map(row => row.RFP).filter(Boolean))].sort();
+
+            populateMultiSelect('client', clients);
+            populateMultiSelect('status', statuses);
+            populateMultiSelect('category', categories);
+            populateMultiSelect('spoc', spocs);
+            populateMultiSelect('rfp', rfps);
+        }
+
+        function populateMultiSelect(filterType, options) {
+            const optionsContainer = document.getElementById(`${filterType}Options`);
+            optionsContainer.innerHTML = '';
+
+            options.forEach(option => {
+                const optionDiv = document.createElement('div');
+                optionDiv.className = 'multi-select-option';
+                optionDiv.innerHTML = `
+                    <input type="checkbox" id="${filterType}_${option}" value="${option}" 
+                           onchange="updateMultiSelect('${filterType}', '${option}', this.checked)">
+                    <label for="${filterType}_${option}">${option}</label>
+                `;
+                optionsContainer.appendChild(optionDiv);
+            });
+        }
+
+        function toggleDropdown(selectId) {
+            const dropdown = document.getElementById(selectId);
+            const options = dropdown.querySelector('.multi-select-options');
+            
+            // Close all other dropdowns
+            document.querySelectorAll('.multi-select-options').forEach(opt => {
+                if (opt !== options) {
+                    opt.style.display = 'none';
+                }
+            });
+
+            // Toggle current dropdown
+            options.style.display = options.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function updateMultiSelect(filterType, value, isChecked) {
+            if (isChecked) {
+                if (!selectedFilters[filterType].includes(value)) {
+                    selectedFilters[filterType].push(value);
+                }
+            } else {
+                selectedFilters[filterType] = selectedFilters[filterType].filter(item => item !== value);
+            }
+            
+            updateSelectedItemsDisplay(filterType);
+            applyFilters();
+        }
+
+        function updateSelectedItemsDisplay(filterType) {
+            const selectedItemsContainer = document.getElementById(`${filterType}SelectedItems`);
+            const selected = selectedFilters[filterType];
+            
+            if (selected.length === 0) {
+                const labels = {
+                    client: 'All Clients',
+                    status: 'All Statuses',
+                    category: 'All Categories',
+                    spoc: 'All SPOCs',
+                    rfp: 'All RFP Status'
+                };
+                selectedItemsContainer.innerHTML = labels[filterType];
+            } else {
+                selectedItemsContainer.innerHTML = selected.map(item => `
+                    <span class="selected-item">
+                        ${item}
+                        <span class="remove" onclick="removeSelectedItem('${filterType}', '${item}')">&times;</span>
+                    </span>
+                `).join('');
+            }
+        }
+
+        function removeSelectedItem(filterType, value) {
+            selectedFilters[filterType] = selectedFilters[filterType].filter(item => item !== value);
+            
+            // Update checkbox
+            const checkbox = document.getElementById(`${filterType}_${value}`);
+            if (checkbox) {
+                checkbox.checked = false;
+            }
+            
+            updateSelectedItemsDisplay(filterType);
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const topicSearch = document.getElementById('topicSearch').value.toLowerCase();
+
+            // Show loading for large datasets
+            if (pipelineData.length > 500) {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('loading').innerHTML = '<h3>🔄 Applying filters...</h3>';
+                
+                // Use setTimeout to allow UI to update
+                setTimeout(() => {
+                    performFiltering(topicSearch);
+                    document.getElementById('loading').style.display = 'none';
+                }, 10);
+            } else {
+                performFiltering(topicSearch);
+            }
+        }
+
+        function performFiltering(topicSearch) {
+            filteredData = pipelineData.filter(row => {
+                return (selectedFilters.client.length === 0 || selectedFilters.client.includes(row.Client)) &&
+                       (selectedFilters.status.length === 0 || selectedFilters.status.includes(row.Status)) &&
+                       (selectedFilters.category.length === 0 || selectedFilters.category.includes(row.Category)) &&
+                       (selectedFilters.spoc.length === 0 || selectedFilters.spoc.includes(row['BD SPOC'])) &&
+                       (selectedFilters.rfp.length === 0 || selectedFilters.rfp.includes(row.RFP)) &&
+                       (!topicSearch || (row['Lead Topic'] && row['Lead Topic'].toLowerCase().includes(topicSearch)));
+            });
+
+            updateStats();
+            updateCharts();
+            renderTable();
+        }
+
+        function clearFilters() {
+            // Reset all selected filters
+            selectedFilters = {
+                client: [],
+                status: [],
+                category: [],
+                spoc: [],
+                rfp: []
+            };
+
+            // Update displays
+            ['client', 'status', 'category', 'spoc', 'rfp'].forEach(filterType => {
+                updateSelectedItemsDisplay(filterType);
+                // Uncheck all checkboxes
+                document.querySelectorAll(`#${filterType}Options input[type="checkbox"]`).forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+            });
+
+            document.getElementById('topicSearch').value = '';
+            
+            filteredData = [...pipelineData];
+            updateStats();
+            updateCharts();
+            renderTable();
+        }
+
+        function updateStats() {
+            const totalOpportunities = filteredData.length;
+            const activeOpportunities = filteredData.filter(row => 
+                row.Status && row.Status === 'Opportunity'
+            ).length;
+            const lostOpportunities = filteredData.filter(row => row.Status === 'Opp-Lost').length;
+            const uniqueClients = new Set(filteredData.map(row => row.Client).filter(Boolean)).size;
+
+            document.getElementById('totalOpportunities').textContent = totalOpportunities;
+            document.getElementById('activeOpportunities').textContent = activeOpportunities;
+            document.getElementById('lostOpportunities').textContent = lostOpportunities;
+            document.getElementById('uniqueClients').textContent = uniqueClients;
+        }
+
+        function createCharts() {
+            createStatusChart();
+            createCategoryChart();
+        }
+
+        function updateCharts() {
+            if (statusChart) statusChart.destroy();
+            if (categoryChart) categoryChart.destroy();
+            createCharts();
+        }
+
+        function createStatusChart() {
+            const statusCounts = {};
+            filteredData.forEach(row => {
+                const status = row.Status || 'Unknown';
+                statusCounts[status] = (statusCounts[status] || 0) + 1;
+            });
+
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            statusChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(statusCounts),
+                    datasets: [{
+                        data: Object.values(statusCounts),
+                        backgroundColor: [
+                            tahakomColors.purple[0], tahakomColors.purple[1], tahakomColors.purple[2], tahakomColors.purple[3],
+                            tahakomColors.teal[0], tahakomColors.teal[1], tahakomColors.teal[2],
+                            tahakomColors.gray[0], tahakomColors.gray[1], tahakomColors.gray[2]
+                        ],
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    },
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const index = elements[0].index;
+                            const status = Object.keys(statusCounts)[index];
+                            showDetailModal('status', `${status} Opportunities`, status);
+                        }
+                    }
+                }
+            });
+        }
+
+        function createCategoryChart() {
+            const categoryCounts = {};
+            filteredData.forEach(row => {
+                const category = row.Category || 'Unknown';
+                categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+            });
+
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            categoryChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(categoryCounts),
+                    datasets: [{
+                        label: 'Number of Opportunities',
+                        data: Object.values(categoryCounts),
+                        backgroundColor: [
+                            tahakomColors.purple[0], tahakomColors.teal[0], 
+                            tahakomColors.purple[1], tahakomColors.gray[0]
+                        ],
+                        borderColor: [
+                            tahakomColors.purple[0], tahakomColors.teal[0], 
+                            tahakomColors.purple[1], tahakomColors.gray[0]
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    },
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const index = elements[0].index;
+                            const category = Object.keys(categoryCounts)[index];
+                            showDetailModal('category', `${category} Opportunities`, category);
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderTable() {
+            if (filteredData.length === 0) {
+                document.getElementById('tableHeaders').innerHTML = '';
+                document.getElementById('tableBody').innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 40px; color: var(--tahakom-gray-dark);">No data matches the current filters</td></tr>';
+                document.getElementById('recordCount').textContent = '0 records';
+                return;
+            }
+
+            // Get all available headers from data
+            const allHeaders = Object.keys(filteredData[0]);
+            
+            // Filter headers based on visibility settings AND default column preference
+            const visibleHeaders = allHeaders.filter(header => 
+                tableSettings.columnVisibility[header] === true
+            );
+            
+            // Sort visible headers to match default column order when possible
+            const sortedVisibleHeaders = [...visibleHeaders].sort((a, b) => {
+                const aIndex = defaultColumns.indexOf(a);
+                const bIndex = defaultColumns.indexOf(b);
+                
+                if (aIndex !== -1 && bIndex !== -1) {
+                    return aIndex - bIndex;
+                }
+                if (aIndex !== -1) return -1;
+                if (bIndex !== -1) return 1;
+                return 0;
+            });
+            
+            // Create table headers with resizable functionality
+            const headerRow = document.getElementById('tableHeaders');
+            headerRow.innerHTML = sortedVisibleHeaders.map((header, index) => {
+                const width = tableSettings.columnWidths[header] || getDefaultColumnWidth(header);
+                return `
+                    <th class="resizable-header" style="width: ${width}px; min-width: ${width}px; max-width: ${width}px;">
+                        ${header}
+                        <div class="column-resizer" 
+                             onmousedown="startResize(event, '${header}')"
+                             data-column="${header}"></div>
+                    </th>
+                `;
+            }).join('');
+
+            // Performance optimization: Only render visible rows for large datasets
+            const maxRowsToRender = 100; // Limit initial render
+            const dataToRender = filteredData.length > maxRowsToRender ? 
+                filteredData.slice(0, maxRowsToRender) : filteredData;
+
+            // Create table body with performance optimization using requestAnimationFrame
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = ''; // Clear first
+            
+            // Render rows in batches to prevent UI blocking
+            renderRowsBatch(dataToRender, sortedVisibleHeaders, tbody, 0, 25);
+
+            // Update record count with info about partial loading
+            const recordCountText = filteredData.length > maxRowsToRender ? 
+                `${filteredData.length} records (showing first ${maxRowsToRender})` : 
+                `${filteredData.length} records`;
+            document.getElementById('recordCount').textContent = recordCountText;
+
+            // Add "Load More" functionality for large datasets
+            if (filteredData.length > maxRowsToRender) {
+                setTimeout(() => {
+                    addLoadMoreButton(maxRowsToRender, sortedVisibleHeaders);
+                }, 100);
+            }
+        }
+
+        function renderRowsBatch(dataToRender, sortedVisibleHeaders, tbody, startIndex, batchSize) {
+            const endIndex = Math.min(startIndex + batchSize, dataToRender.length);
+            const fragment = document.createDocumentFragment();
+            
+            for (let i = startIndex; i < endIndex; i++) {
+                const row = dataToRender[i];
+                const tr = document.createElement('tr');
+                tr.className = 'table-row-clickable';
+                tr.onclick = () => showRowDetails(row);
+                
+                tr.innerHTML = sortedVisibleHeaders.map(header => {
+                    let cellValue = row[header] || '';
+                    const width = tableSettings.columnWidths[header] || getDefaultColumnWidth(header);
+                    
+                    // Apply styling for specific columns (optimized)
+                    if (header === 'Status') {
+                        const statusClass = getStatusClass(cellValue);
+                        cellValue = `<span class="status-badge ${statusClass}">${cellValue}</span>`;
+                    } else if (header === 'Category') {
+                        const categoryClass = getCategoryClass(cellValue);
+                        cellValue = `<span class="category-badge ${categoryClass}">${cellValue}</span>`;
+                    } else if (header === 'Lead Topic' || header === 'Next Step' || header === 'Actions done') {
+                        // Improved truncation logic - use more space intelligently
+                        const maxLength = Math.max(30, Math.floor(width / 6)); // More generous character calculation
+                        if (cellValue.length > maxLength) {
+                            cellValue = `<span class="expandable-text" title="Click row to see full details">${cellValue.substring(0, maxLength)}... <span class="expand-icon">🔍</span></span>`;
+                        }
+                        // If text fits, don't add the expand icon
+                    }
+                    
+                    return `<td style="width: ${width}px; min-width: ${width}px; max-width: ${width}px;">${cellValue}</td>`;
+                }).join('');
+                
+                fragment.appendChild(tr);
+            }
+            
+            tbody.appendChild(fragment);
+            
+            // If there are more rows to render, schedule next batch
+            if (endIndex < dataToRender.length) {
+                requestAnimationFrame(() => {
+                    renderRowsBatch(dataToRender, sortedVisibleHeaders, tbody, endIndex, batchSize);
+                });
+            }
+        }
+
+        function addLoadMoreButton(currentlyShown, visibleHeaders) {
+            const tbody = document.getElementById('tableBody');
+            const loadMoreRow = document.createElement('tr');
+            loadMoreRow.id = 'loadMoreRow';
+            loadMoreRow.innerHTML = `
+                <td colspan="${visibleHeaders.length}" style="text-align: center; padding: 20px;">
+                    <button class="btn" onclick="loadMoreRows(${currentlyShown}, ${JSON.stringify(visibleHeaders).replace(/"/g, '&quot;')})">
+                        📄 Load More Rows (${filteredData.length - currentlyShown} remaining)
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(loadMoreRow);
+        }
+
+        function loadMoreRows(currentlyShown, visibleHeaders) {
+            const batchSize = 50;
+            const startIndex = currentlyShown;
+            const endIndex = Math.min(startIndex + batchSize, filteredData.length);
+            const newRows = filteredData.slice(startIndex, endIndex);
+            
+            const tbody = document.getElementById('tableBody');
+            const loadMoreRow = document.getElementById('loadMoreRow');
+            
+            // Remove load more button temporarily
+            if (loadMoreRow) {
+                loadMoreRow.remove();
+            }
+            
+            // Add new rows
+            const fragment = document.createDocumentFragment();
+            newRows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'table-row-clickable';
+                tr.onclick = () => showRowDetails(row);
+                tr.innerHTML = visibleHeaders.map(header => {
+                    let cellValue = row[header] || '';
+                    const width = tableSettings.columnWidths[header] || getDefaultColumnWidth(header);
+                    
+                    if (header === 'Status') {
+                        const statusClass = getStatusClass(cellValue);
+                        cellValue = `<span class="status-badge ${statusClass}">${cellValue}</span>`;
+                    } else if (header === 'Category') {
+                        const categoryClass = getCategoryClass(cellValue);
+                        cellValue = `<span class="category-badge ${categoryClass}">${cellValue}</span>`;
+                    } else if (header === 'Lead Topic' || header === 'Next Step' || header === 'Actions done') {
+                        const maxLength = Math.max(30, Math.floor(width / 6));
+                        if (cellValue.length > maxLength) {
+                            cellValue = `<span class="expandable-text" title="Click row to see full details">${cellValue.substring(0, maxLength)}... <span class="expand-icon">🔍</span></span>`;
+                        }
+                    }
+                    
+                    return `<td style="width: ${width}px; min-width: ${width}px; max-width: ${width}px;">${cellValue}</td>`;
+                }).join('');
+                fragment.appendChild(tr);
+            });
+            
+            tbody.appendChild(fragment);
+            
+            // Update record count
+            const newTotal = endIndex;
+            const recordCountText = newTotal >= filteredData.length ? 
+                `${filteredData.length} records` : 
+                `${filteredData.length} records (showing ${newTotal})`;
+            document.getElementById('recordCount').textContent = recordCountText;
+            
+            // Add load more button again if needed
+            if (endIndex < filteredData.length) {
+                addLoadMoreButton(endIndex, visibleHeaders);
+            }
+        }
+
+        // Column resizing functionality
+        function startResize(e, columnName) {
+            e.preventDefault();
+            tableSettings.isResizing = true;
+            tableSettings.currentColumn = columnName;
+            tableSettings.startX = e.clientX;
+            tableSettings.startWidth = tableSettings.columnWidths[columnName] || 150;
+            
+            const resizer = e.target;
+            resizer.classList.add('resizing');
+            
+            document.addEventListener('mousemove', handleResize);
+            document.addEventListener('mouseup', stopResize);
+            
+            // Prevent text selection during resize
+            document.body.style.userSelect = 'none';
+        }
+
+        function handleResize(e) {
+            if (!tableSettings.isResizing) return;
+            
+            const diff = e.clientX - tableSettings.startX;
+            const newWidth = Math.max(80, Math.min(500, tableSettings.startWidth + diff));
+            
+            tableSettings.columnWidths[tableSettings.currentColumn] = newWidth;
+            
+            // Update the table immediately for smooth resizing
+            const headers = document.querySelectorAll(`th:has([data-column="${tableSettings.currentColumn}"])`);
+            const cells = document.querySelectorAll(`td:nth-child(${Array.from(document.querySelectorAll('th')).findIndex(th => th.querySelector(`[data-column="${tableSettings.currentColumn}"]`)) + 1})`);
+            
+            headers.forEach(header => {
+                header.style.width = newWidth + 'px';
+                header.style.minWidth = newWidth + 'px';
+                header.style.maxWidth = newWidth + 'px';
+            });
+            
+            cells.forEach(cell => {
+                cell.style.width = newWidth + 'px';
+                cell.style.minWidth = newWidth + 'px';
+                cell.style.maxWidth = newWidth + 'px';
+            });
+        }
+
+        function stopResize(e) {
+            if (!tableSettings.isResizing) return;
+            
+            tableSettings.isResizing = false;
+            tableSettings.currentColumn = null;
+            
+            document.removeEventListener('mousemove', handleResize);
+            document.removeEventListener('mouseup', stopResize);
+            
+            // Re-enable text selection
+            document.body.style.userSelect = '';
+            
+            // Remove resizing class
+            document.querySelectorAll('.column-resizer.resizing').forEach(resizer => {
+                resizer.classList.remove('resizing');
+            });
+            
+            // Update settings panel if open
+            if (document.getElementById('settingsPanel').classList.contains('open')) {
+                populateTableSettings();
+            }
+        }
+
+        function getStatusClass(status) {
+            const statusMap = {
+                'Lead': 'status-lead',
+                'Opportunity': 'status-opportunity',
+                'Failed': 'status-failed',
+                'Opp-Lost': 'status-failed',
+                'POC': 'status-poc',
+                'Opp-OnHold': 'status-opportunity',
+                'Opp-Submitted': 'status-opportunity',
+                'FP Lead': 'status-lead'
+            };
+            return statusMap[status] || 'status-lead';
+        }
+
+        function getCategoryClass(category) {
+            const categoryMap = {
+                'Hot deals': 'category-hot',
+                'Strategic bet': 'category-strategic',
+                'Tactical distraction': 'category-tactical',
+                'Dead weight': 'category-dead'
+            };
+            return categoryMap[category] || 'category-strategic';
+        }
+
+        // Auto-apply filters when typing in search
+        document.getElementById('topicSearch').addEventListener('input', function() {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(() => {
+                applyFilters();
+            }, 300);
+        });
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            const isMultiSelect = event.target.closest('.multi-select');
+            if (!isMultiSelect) {
+                document.querySelectorAll('.multi-select-options').forEach(options => {
+                    options.style.display = 'none';
+                });
+            }
+        });
+
+        // Modal functions
+        function showDetailModal(type, title, filterValue = null) {
+            const modal = document.getElementById('detailModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalContent = document.getElementById('modalContent');
+
+            modalTitle.textContent = title;
+
+            let content = '';
+            let dataToShow = [];
+
+            switch(type) {
+                case 'total':
+                    dataToShow = filteredData;
+                    content = `<div class="detail-list">`;
+                    dataToShow.forEach((item) => {
+                        content += `
+                            <div class="detail-item">
+                                <h4>${item['Lead Topic'] || 'N/A'}</h4>
+                                <p><strong>Client:</strong> ${item.Client || 'N/A'}</p>
+                                <p><strong>Status:</strong> ${item.Status || 'N/A'}</p>
+                                <p><strong>Category:</strong> ${item.Category || 'N/A'}</p>
+                                <p><strong>BD SPOC:</strong> ${item['BD SPOC'] || 'N/A'}</p>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    break;
+
+                case 'active':
+                    dataToShow = filteredData.filter(row => row.Status === 'Opportunity');
+                    content = `<div class="detail-list">`;
+                    dataToShow.forEach((item) => {
+                        content += `
+                            <div class="detail-item">
+                                <h4>${item['Lead Topic'] || 'N/A'}</h4>
+                                <p><strong>Client:</strong> ${item.Client || 'N/A'}</p>
+                                <p><strong>Category:</strong> ${item.Category || 'N/A'}</p>
+                                <p><strong>BD SPOC:</strong> ${item['BD SPOC'] || 'N/A'}</p>
+                                <p><strong>Next Step:</strong> ${item['Next Step'] || 'N/A'}</p>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    break;
+
+                case 'lost':
+                    dataToShow = filteredData.filter(row => row.Status === 'Opp-Lost');
+                    content = `<div class="detail-list">`;
+                    dataToShow.forEach((item) => {
+                        content += `
+                            <div class="detail-item">
+                                <h4>${item['Lead Topic'] || 'N/A'}</h4>
+                                <p><strong>Client:</strong> ${item.Client || 'N/A'}</p>
+                                <p><strong>Category:</strong> ${item.Category || 'N/A'}</p>
+                                <p><strong>BD SPOC:</strong> ${item['BD SPOC'] || 'N/A'}</p>
+                                <p><strong>Actions Done:</strong> ${item['Actions done'] || 'N/A'}</p>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    break;
+
+                case 'clients':
+                    const uniqueClientsData = [...new Set(filteredData.map(row => row.Client).filter(client => client && client.trim() !== ''))].sort();
+                    content = `<div class="detail-list">`;
+                    
+                    if (uniqueClientsData.length === 0) {
+                        content += '<p style="text-align: center; padding: 20px; color: var(--tahakom-gray-dark);">No clients found in current data.</p>';
+                    } else {
+                        uniqueClientsData.forEach((client) => {
+                            const clientOpps = filteredData.filter(row => row.Client && row.Client.trim() === client.trim());
+                            const activeCount = clientOpps.filter(row => row.Status === 'Opportunity').length;
+                            const lostCount = clientOpps.filter(row => row.Status === 'Opp-Lost').length;
+                            const leadCount = clientOpps.filter(row => row.Status === 'Lead').length;
+                            const totalOtherStatuses = clientOpps.length - activeCount - lostCount - leadCount;
+                            
+                            content += `
+                                <div class="detail-item">
+                                    <h4>${client}</h4>
+                                    <p><strong>Total Opportunities:</strong> ${clientOpps.length}</p>
+                                    <p><strong>Active (Opportunity):</strong> ${activeCount}</p>
+                                    <p><strong>Leads:</strong> ${leadCount}</p>
+                                    <p><strong>Lost:</strong> ${lostCount}</p>
+                                    <p><strong>Other Statuses:</strong> ${totalOtherStatuses}</p>
+                                    <p><strong>Main BD SPOC:</strong> ${clientOpps[0] && clientOpps[0]['BD SPOC'] ? clientOpps[0]['BD SPOC'] : 'N/A'}</p>
+                                </div>
+                            `;
+                        });
+                    }
+                    content += '</div>';
+                    break;
+
+                case 'status':
+                    dataToShow = filteredData.filter(row => (row.Status || 'Unknown') === filterValue);
+                    content = `<div class="detail-list">`;
+                    dataToShow.forEach((item) => {
+                        content += `
+                            <div class="detail-item">
+                                <h4>${item['Lead Topic'] || 'N/A'}</h4>
+                                <p><strong>Client:</strong> ${item.Client || 'N/A'}</p>
+                                <p><strong>Category:</strong> ${item.Category || 'N/A'}</p>
+                                <p><strong>BD SPOC:</strong> ${item['BD SPOC'] || 'N/A'}</p>
+                                <p><strong>Received:</strong> ${item.Received || 'N/A'}</p>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    break;
+
+                case 'category':
+                    dataToShow = filteredData.filter(row => (row.Category || 'Unknown') === filterValue);
+                    content = `<div class="detail-list">`;
+                    dataToShow.forEach((item) => {
+                        content += `
+                            <div class="detail-item">
+                                <h4>${item['Lead Topic'] || 'N/A'}</h4>
+                                <p><strong>Client:</strong> ${item.Client || 'N/A'}</p>
+                                <p><strong>Status:</strong> ${item.Status || 'N/A'}</p>
+                                <p><strong>BD SPOC:</strong> ${item['BD SPOC'] || 'N/A'}</p>
+                                <p><strong>Next Step:</strong> ${item['Next Step'] || 'N/A'}</p>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    break;
+            }
+
+            if (type !== 'clients' && dataToShow.length === 0) {
+                content = '<p style="text-align: center; color: var(--tahakom-gray-dark); padding: 40px;">No data available for this selection.</p>';
+            }
+
+            modalContent.innerHTML = content;
+            modal.style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('detailModal').style.display = 'none';
+        }
+
+        // Row detail modal functions
+        function showRowDetails(rowData) {
+            const modal = document.getElementById('rowDetailModal');
+            const modalTitle = document.getElementById('rowDetailTitle');
+            const modalContent = document.getElementById('rowDetailContent');
+
+            // Reset scroll position to top
+            const modalBody = modal.querySelector('.modal-body');
+            if (modalBody) {
+                modalBody.scrollTop = 0;
+            }
+
+            // Set title
+            modalTitle.textContent = `📋 ${rowData['Lead Topic'] || 'Opportunity Details'}`;
+
+            // Get all headers including hidden ones
+            const allHeaders = Object.keys(rowData);
+            
+            // Use the same visibility settings from table settings
+            // Show only fields that are currently visible in the table OR essential info
+            const essentialFields = ['#', 'Client', 'Lead Topic', 'Category', 'Status', 'BD SPOC', 'Received', 'RFP', 'QAF', 'Next Step', 'Actions done'];
+            
+            // Get visible fields from table settings
+            const visibleFields = allHeaders.filter(header => 
+                tableSettings.columnVisibility[header] === true || essentialFields.includes(header)
+            );
+
+            let content = '';
+
+            // Group visible fields for better organization
+            const fieldGroups = {
+                'Basic Information': ['#', 'Client', 'Lead Topic', 'Category', 'Status'],
+                'Contact & Timeline': ['BD SPOC', 'Received', 'RFP', 'QAF'],
+                'Details & Actions': ['Actions done', 'Next Step'],
+                'Additional Information': visibleFields.filter(header => 
+                    !['#', 'Client', 'Lead Topic', 'Category', 'Status', 'BD SPOC', 'Received', 'RFP', 'QAF', 'Actions done', 'Next Step'].includes(header)
+                )
+            };
+
+            Object.entries(fieldGroups).forEach(([groupName, fields]) => {
+                const availableFields = fields.filter(field => 
+                    visibleFields.includes(field) && rowData[field] !== null && rowData[field] !== undefined && rowData[field] !== ''
+                );
+
+                if (availableFields.length > 0) {
+                    content += `<h3 style="color: var(--tahakom-purple-dark); margin: 20px 0 15px 0; border-bottom: 2px solid var(--tahakom-purple-lightest); padding-bottom: 5px;">${groupName}</h3>`;
+                    content += '<div class="detail-grid">';
+
+                    availableFields.forEach(field => {
+                        let value = rowData[field] || 'N/A';
+                        let isFullWidth = false;
+
+                        // Special formatting for certain fields
+                        if (field === 'Status') {
+                            const statusClass = getStatusClass(value);
+                            value = `<span class="status-badge ${statusClass}">${value}</span>`;
+                        } else if (field === 'Category') {
+                            const categoryClass = getCategoryClass(value);
+                            value = `<span class="category-badge ${categoryClass}">${value}</span>`;
+                        } else if (field === 'Lead Topic' || field === 'Actions done' || field === 'Next Step' || field.toLowerCase().includes('comment')) {
+                            isFullWidth = true; // Long text fields get full width
+                        }
+
+                        content += `
+                            <div class="detail-card ${isFullWidth ? 'full-width' : ''}">
+                                <h4>${field}</h4>
+                                <p>${value}</p>
+                            </div>
+                        `;
+                    });
+
+                    content += '</div>';
+                }
+            });
+
+            if (content === '') {
+                content = '<p style="text-align: center; padding: 40px; color: var(--tahakom-gray-dark);">No details available for this record.</p>';
+            }
+
+            // Add note about using table settings
+            content += `
+                <div style="margin-top: 20px; padding: 15px; background: var(--tahakom-purple-lightest); border-radius: 8px; border-left: 4px solid var(--tahakom-teal-dark);">
+                    <p style="margin: 0; color: var(--tahakom-gray-dark); font-size: 0.9rem;">
+                        💡 To show more fields in this detail view, enable additional columns in the table settings (⚙️ Settings button).
+                    </p>
+                </div>
+            `;
+
+            modalContent.innerHTML = content;
+            modal.style.display = 'block';
+            
+            // Ensure modal starts from top
+            setTimeout(() => {
+                if (modalBody) {
+                    modalBody.scrollTop = 0;
+                }
+            }, 10);
+        }
+
+        function closeRowDetailModal() {
+            document.getElementById('rowDetailModal').style.display = 'none';
+        }
+
+        // Update the window click handler to include the new modal
+        window.onclick = function(event) {
+            const modal = document.getElementById('detailModal');
+            const rowModal = document.getElementById('rowDetailModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+            if (event.target === rowModal) {
+                rowModal.style.display = 'none';
+            }
+        }
+
+        // Auto-load from GitHub when page loads
+        loadGitHubData();
+    </script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tahakom Leads Pipeline Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --tahakom-purple-dark: #4a1850;
+            --tahakom-purple-medium: #8e4a97;
+            --tahakom-purple-light: #c8a2c8;
+            --tahakom-purple-lightest: #e6d6e6;
+            --tahakom-teal-dark: #20b2aa;
+            --tahakom-teal-medium: #48d1cc;
+            --tahakom-teal-light: #7fefea;
+            --tahakom-gray-dark: #6b6b6b;
+            --tahakom-gray-medium: #9e9e9e;
+            --tahakom-gray-light: #d3d3d3;
+            --white: #ffffff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--tahakom-purple-lightest) 0%, var(--tahakom-teal-light) 100%);
+            min-height: 100vh;
+        }
+
+        .dashboard-container {
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: var(--tahakom-purple-dark);
+            color: var(--white);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(74, 24, 80, 0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .file-upload {
+            background: var(--white);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .upload-area {
+            border: 2px dashed var(--tahakom-teal-dark);
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover {
+            background-color: var(--tahakom-teal-light);
+            border-color: var(--tahakom-purple-medium);
+        }
+
+        .filters {
+            background: var(--white);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-group label {
+            font-weight: 600;
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 5px;
+        }
+
+        /* Multi-select styling */
+        .multi-select {
+            position: relative;
+        }
+
+        .multi-select-dropdown {
+            border: 2px solid var(--tahakom-gray-light);
+            border-radius: 8px;
+            padding: 10px;
+            background: white;
+            cursor: pointer;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: border-color 0.3s ease;
+        }
+
+        .multi-select-dropdown:hover {
+            border-color: var(--tahakom-teal-dark);
+        }
+
+        .multi-select-dropdown::after {
+            content: '▼';
+            font-size: 12px;
+            color: var(--tahakom-gray-dark);
+        }
+
+        .multi-select-options {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 2px solid var(--tahakom-gray-light);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .multi-select-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .multi-select-option:hover {
+            background: var(--tahakom-teal-light);
+        }
+
+        .selected-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            min-height: 20px;
+        }
+
+        .selected-item {
+            background: var(--tahakom-teal-dark);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .selected-item .remove {
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .filter-group input {
+            padding: 10px;
+            border: 2px solid var(--tahakom-gray-light);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .filter-group input:focus {
+            outline: none;
+            border-color: var(--tahakom-teal-dark);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--white);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--tahakom-purple-dark), var(--tahakom-teal-dark));
+        }
+
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+        }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            color: var(--tahakom-gray-dark);
+            font-size: 1.1rem;
+        }
+
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            background: var(--white);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .chart-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .data-table {
+            background: var(--white);
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            width: 100%;
+        }
+
+        .table-header {
+            background: var(--tahakom-purple-dark);
+            color: var(--white);
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .settings-btn {
+            background: var(--tahakom-teal-dark);
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.3s ease;
+        }
+
+        .settings-btn:hover {
+            background: var(--tahakom-teal-medium);
+        }
+
+        /* Settings Panel */
+        .settings-panel {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 380px;
+            height: 100vh;
+            background: white;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            z-index: 2000;
+            transition: right 0.3s ease;
+            overflow-y: auto;
+        }
+
+        .settings-panel.open {
+            right: 0;
+        }
+
+        .settings-header {
+            background: var(--tahakom-purple-dark);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-body {
+            padding: 20px;
+        }
+
+        .setting-group {
+            margin-bottom: 25px;
+        }
+
+        .setting-group h4 {
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            border-bottom: 2px solid var(--tahakom-purple-lightest);
+            padding-bottom: 8px;
+        }
+
+        .column-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--tahakom-gray-light);
+        }
+
+        .column-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .width-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .width-slider {
+            width: 80px;
+        }
+
+        .width-value {
+            width: 40px;
+            font-size: 12px;
+            color: var(--tahakom-gray-dark);
+        }
+
+        /* Resizable table headers */
+        .resizable-header {
+            position: relative;
+            user-select: none;
+        }
+
+        .column-resizer {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 5px;
+            height: 100%;
+            cursor: col-resize;
+            background: transparent;
+            border-right: 2px solid transparent;
+        }
+
+        .column-resizer:hover {
+            border-right-color: var(--tahakom-teal-dark);
+        }
+
+        .column-resizer.resizing {
+            border-right-color: var(--tahakom-purple-dark);
+        }
+
+        /* Overlay for settings panel */
+        .settings-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1999;
+            display: none;
+        }
+
+        .settings-overlay.show {
+            display: block;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            max-height: 600px;
+            overflow-y: auto;
+            width: 100%;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: auto;
+        }
+
+        th, td {
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 1px solid var(--tahakom-gray-light);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 120px;
+        }
+
+        th {
+            background: var(--tahakom-purple-lightest);
+            color: var(--tahakom-purple-dark);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        tr:hover {
+            background-color: var(--tahakom-teal-light);
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-lead { background: var(--tahakom-teal-light); color: var(--tahakom-purple-dark); }
+        .status-opportunity { background: var(--tahakom-purple-light); color: var(--white); }
+        .status-failed { background: #ffcccb; color: #d32f2f; }
+        .status-poc { background: var(--tahakom-teal-medium); color: var(--white); }
+
+        .category-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .category-hot { background: #ff6b6b; color: white; }
+        .category-strategic { background: var(--tahakom-purple-medium); color: white; }
+        .category-tactical { background: var(--tahakom-teal-dark); color: white; }
+        .category-dead { background: var(--tahakom-gray-medium); color: white; }
+
+        .btn {
+            background: var(--tahakom-teal-dark);
+            color: var(--white);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            background: var(--tahakom-purple-medium);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: var(--tahakom-gray-medium);
+        }
+
+        .btn-secondary:hover {
+            background: var(--tahakom-gray-dark);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .dashboard-container {
+                max-width: 100%;
+                padding: 15px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            th, td {
+                min-width: 100px;
+                padding: 8px 6px;
+                font-size: 13px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .dashboard-container {
+                padding: 10px;
+            }
+
+            th, td {
+                min-width: 80px;
+                padding: 6px 4px;
+                font-size: 11px;
+            }
+
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .stat-number {
+                font-size: 2rem;
+            }
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--tahakom-purple-dark);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--tahakom-gray-dark);
+        }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: var(--white);
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 12px;
+            width: 80%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            background: var(--tahakom-purple-dark);
+            color: var(--white);
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 20px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .close {
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+
+        .close:hover {
+            color: var(--tahakom-teal-light);
+        }
+
+        .detail-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .detail-item {
+            background: var(--tahakom-purple-lightest);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--tahakom-teal-dark);
+        }
+
+        .detail-item h4 {
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 5px;
+        }
+
+        /* Row click and detail view styling */
+        .table-row-clickable {
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .table-row-clickable:hover {
+            background-color: var(--tahakom-teal-light) !important;
+            transform: scale(1.01);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .row-detail-modal .modal-content {
+            max-width: 900px;
+            width: 90%;
+            margin-top: 2%; /* Start closer to top */
+        }
+
+        .modal-body {
+            padding: 20px;
+            max-height: 80vh;
+            overflow-y: auto;
+            /* Ensure modal starts from top */
+            scroll-behavior: smooth;
+        }
+
+        .detail-settings-bar {
+            background: var(--tahakom-purple-lightest);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid var(--tahakom-purple-light);
+        }
+
+        .detail-settings-bar h4 {
+            margin: 0;
+            color: var(--tahakom-purple-dark);
+            font-size: 0.9rem;
+        }
+
+        .detail-toggle-button {
+            background: var(--tahakom-teal-dark);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.3s ease;
+        }
+
+        .detail-toggle-button:hover {
+            background: var(--tahakom-purple-medium);
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .detail-card {
+            background: var(--tahakom-purple-lightest);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--tahakom-teal-dark);
+        }
+
+        .detail-card.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .detail-card.hidden {
+            display: none;
+        }
+
+        .detail-card h4 {
+            color: var(--tahakom-purple-dark);
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .detail-card p {
+            color: var(--tahakom-gray-dark);
+            margin: 0;
+            font-size: 1rem;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+
+        .expandable-text {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .expandable-text:hover {
+            color: var(--tahakom-teal-dark);
+        }
+
+        .expand-icon {
+            margin-left: 5px;
+            font-size: 0.8rem;
+            color: var(--tahakom-teal-dark);
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="header">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <h1>Tahakom Leads Pipeline Dashboard</h1>
+                    <p>Comprehensive view of business opportunities and pipeline management</p>
+                </div>
+                <div style="width: 80px; height: 80px;">
+                    <svg viewBox="0 0 100 100" style="width: 100%; height: 100%;">
+                        <rect x="45" y="10" width="6" height="6" fill="#20b2aa" rx="1"/>
+                        <rect x="55" y="10" width="6" height="6" fill="#8e4a97" rx="1"/>
+                        <rect x="65" y="10" width="6" height="6" fill="#4a1850" rx="1"/>
+                        <rect x="75" y="10" width="4" height="4" fill="#4a1850" rx="1"/>
+                        <rect x="82" y="10" width="3" height="3" fill="#4a1850" rx="1"/>
+                        
+                        <rect x="35" y="20" width="6" height="6" fill="#48d1cc" rx="1"/>
+                        <rect x="45" y="20" width="8" height="8" fill="#20b2aa" rx="2"/>
+                        <rect x="55" y="20" width="8" height="8" fill="#48d1cc" rx="2"/>
+                        <rect x="65" y="20" width="6" height="6" fill="#8e4a97" rx="1"/>
+                        <rect x="75" y="20" width="4" height="4" fill="#4a1850" rx="1"/>
+                        
+                        <rect x="25" y="30" width="6" height="6" fill="#7fefea" rx="1"/>
+                        <rect x="35" y="30" width="8" height="8" fill="#48d1cc" rx="2"/>
+                        <rect x="45" y="30" width="10" height="10" fill="#20b2aa" rx="2"/>
+                        <rect x="55" y="30" width="8" height="8" fill="#48d1cc" rx="2"/>
+                        <rect x="65" y="30" width="6" height="6" fill="#8e4a97" rx="1"/>
+                        
+                        <rect x="35" y="42" width="8" height="8" fill="#48d1cc" rx="2"/>
+                        <rect x="45" y="42" width="8" height="8" fill="#20b2aa" rx="2"/>
+                        <rect x="55" y="42" width="6" height="6" fill="#48d1cc" rx="1"/>
+                        
+                        <rect x="45" y="54" width="4" height="4" fill="#20b2aa" rx="1"/>
+                        <rect x="52" y="54" width="3" height="3" fill="#48d1cc" rx="1"/>
+                        
+                        <text x="50" y="75" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#4a1850">تحكم</text>
+                        <text x="50" y="88" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#20b2aa" letter-spacing="2">TAHAKOM</text>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <div class="file-upload">
+            <div class="upload-area">
+                <h3>📊 Auto-Loading Data from GitHub</h3>
+                <p>Data is automatically loaded from GitHub repository</p>
+                <button class="btn" onclick="loadGitHubData()" style="margin-top: 15px;">🔄 Refresh Data</button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <h3>🔄 Loading data...</h3>
+        </div>
+
+        <div id="dashboardContent" style="display: none;">
+            <div class="filters">
+                <h3 style="color: var(--tahakom-purple-dark); margin-bottom: 15px;">🔍 Filters</h3>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Client</label>
+                        <div class="multi-select" id="clientMultiSelect">
+                            <div class="multi-select-dropdown" onclick="toggleDropdown('clientMultiSelect')">
+                                <div class="selected-items" id="clientSelectedItems">All Clients</div>
+                            </div>
+                            <div class="multi-select-options" id="clientOptions"></div>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label>Status</label>
+                        <div class="multi-select" id="statusMultiSelect">
+                            <div class="multi-select-dropdown" onclick="toggleDropdown('statusMultiSelect')">
+                                <div class="selected-items" id="statusSelectedItems">All Statuses</div>
+                            </div>
+                            <div class="multi-select-options" id="statusOptions"></div>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label>Category</label>
+                        <div class="multi-select" id="categoryMultiSelect">
+                            <div class="multi-select-dropdown" onclick="toggleDropdown('categoryMultiSelect')">
+                                <div class="selected-items" id="categorySelectedItems">All Categories</div>
+                            </div>
+                            <div class="multi-select-options" id="categoryOptions"></div>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label>BD SPOC</label>
+                        <div class="multi-select" id="spocMultiSelect">
+                            <div class="multi-select-dropdown" onclick="toggleDropdown('spocMultiSelect')">
+                                <div class="selected-items" id="spocSelectedItems">All SPOCs</div>
+                            </div>
+                            <div class="multi-select-options" id="spocOptions"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>RFP Status</label>
+                        <div class="multi-select" id="rfpMultiSelect">
+                            <div class="multi-select-dropdown" onclick="toggleDropdown('rfpMultiSelect')">
+                                <div class="selected-items" id="rfpSelectedItems">All RFP Status</div>
+                            </div>
+                            <div class="multi-select-options" id="rfpOptions"></div>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label>Search Lead Topic</label>
+                        <input type="text" id="topicSearch" placeholder="Enter keywords...">
+                    </div>
+                    <div class="filter-group" style="display: flex; align-items: end;">
+                        <button class="btn" onclick="applyFilters()">Apply Filters</button>
+                    </div>
+                    <div class="filter-group" style="display: flex; align-items: end;">
+                        <button class="btn btn-secondary" onclick="clearFilters()">Clear All</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card" onclick="showDetailModal('total', 'Total Opportunities')" style="cursor: pointer;">
+                    <div class="stat-number" id="totalOpportunities">0</div>
+                    <div class="stat-label">Total Opportunities</div>
+                </div>
+                <div class="stat-card" onclick="showDetailModal('active', 'Active Opportunities')" style="cursor: pointer;">
+                    <div class="stat-number" id="activeOpportunities">0</div>
+                    <div class="stat-label">Active Opportunities</div>
+                </div>
+                <div class="stat-card" onclick="showDetailModal('lost', 'Lost Opportunities')" style="cursor: pointer;">
+                    <div class="stat-number" id="lostOpportunities">0</div>
+                    <div class="stat-label">Lost Opportunities</div>
+                </div>
+                <div class="stat-card" onclick="showDetailModal('clients', 'Unique Clients')" style="cursor: pointer;">
